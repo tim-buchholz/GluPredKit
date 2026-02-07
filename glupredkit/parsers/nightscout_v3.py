@@ -219,9 +219,16 @@ class Parser(BaseParser):
 
             # Verify treatments
             df = self.verify_treatments(treatments, df)
+            
+            # make insulin source explicit
+            basal_source = 'profile_current'
+            df['basal_source'] = basal_source
+            df['insulin_source'] = f'bolus+{basal_source}'
 
-            # make basal source explicit
-            df['basal_source'] = 'profile_current'
+            # WARNING:
+            # Basal is reconstructed from the currently active profile.
+            # It is NOT guaranteed to match the insulin actually delivered historically.
+            # A future v3 API may provide `basal_delivered`.
 
             return df
 
