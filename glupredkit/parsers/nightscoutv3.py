@@ -15,6 +15,28 @@ def datestring_to_epoch_ms(s: str) -> int:
     dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
     return int(dt.timestamp() * 1000)
 
+## [x] Todo 1
+# Instead of 
+# df_to_merge.index = df_to_merge.index.round('5min')
+# Prefer deterministic binning:
+# df_to_merge.index = df_to_merge.index.floor('5min')
+
+## Todo 2
+# Explicitly flag basal as non-historical
+# basal is consistent with recent setting of the historical profile, but not necessary with the historical basal rate
+
+## Todo 3
+# Prevent accidental misuse of insulin (basal might be incorrect)
+
+## Todo 4
+# Logging instead of printing
+
+## Todo 5
+# what is the column hour for?
+
+## Todo 6
+# a switch to/additional parser for v3 might reduce ambiguity and improve long-term maintainability
+
 # Monkey patch the Treatment class for Loop/Trio compatibility
 from nightscout.models import Treatment
 
@@ -197,6 +219,9 @@ class Parser(BaseParser):
 
             # Verify treatments
             df = self.verify_treatments(treatments, df)
+
+            # make basal source explicit
+            df['basal_source'] = 'profile_current'
 
             return df
 
@@ -415,7 +440,7 @@ class Parser(BaseParser):
                             else:
                                 value = getattr(entry, value_column, 0)
                             # Ensure non-negative values
-                            value = max(0, float(value)) if pd.notnull(value) else 00
+                            value = max(0, float(value)) if pd.notnull(value) else 0
                             values.append(value)
                             percent = getattr(entry, 'percent', 0)
                             percent = max(0, float(percent)) if pd.notnull(percent) else 0
@@ -474,7 +499,7 @@ class Parser(BaseParser):
         """Merge and process dataframes ensuring non-negative values."""
         if not df_to_merge.empty:
             # Convert index to exact 5-minute marks
-            df_to_merge.index = df_to_merge.index.round('5min')
+            df_to_merge.index = df_to_merge.index.floor('5min')
 
             # Ensure non-negative values before resampling
             if column_name in ['basal', 'bolus', 'insulin']:
@@ -510,18 +535,18 @@ class Parser(BaseParser):
 
         for treatment in treatments:
             treatment_time = pd.to_datetime(treatment.created_at).tz_convert(final_df.index.tz)
-            rounded_time = treatment_time.round('5min')
+            floored_time = treatment_time.floor('5min')
 
             if hasattr(treatment, 'insulin') and treatment.insulin:
                 insulin_value = max(0, float(treatment.insulin)) if not pd.isna(treatment.insulin) else 0
-                if rounded_time in final_df.index:
-                    df_value = final_df.loc[rounded_time, 'bolus']
+                if floored_time in final_df.index:
+                    df_value = final_df.loc[floored_time, 'bolus']
                     print(f"Treatment insulin: {insulin_value}, DataFrame bolus: {df_value}")
 
             if hasattr(treatment, 'carbs') and treatment.carbs:
                 carbs_value = max(0, float(treatment.carbs)) if not pd.isna(treatment.carbs) else 0
-                if rounded_time in final_df.index:
-                    df_value = final_df.loc[rounded_time, 'carbs']
+                if floored_time in final_df.index:
+                    df_value = final_df.loc[floored_time, 'carbs']
                     print(f"Treatment carbs: {carbs_value}, DataFrame carbs: {df_value}")
 
         return final_df
