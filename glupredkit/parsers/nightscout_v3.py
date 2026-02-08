@@ -31,7 +31,7 @@ def datestring_to_epoch_ms(s: str) -> int:
 ## [x] Todo 3
 # Prevent accidental misuse of insulin (basal might be incorrect)
 
-## Todo 4
+## [x] Todo 4
 # Logging instead of printing
 
 ## Todo 5
@@ -195,8 +195,11 @@ class Parser(BaseParser):
             # Calculate total insulin
             df['insulin'] = df['bolus'] + df['basal']
 
+            # Hour of day (local time), derived from timestamp.
+            # Convenience feature for time-of-day analysis.
+            df['hour_of_day'] = df.index.hour
+
             # Add additional columns
-            df['hour'] = df.index.hour
             df['id'] = 1
 
             # Convert timezone
