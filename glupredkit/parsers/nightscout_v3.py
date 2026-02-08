@@ -9,6 +9,9 @@ import os
 import urllib.parse
 import numpy as np
 from datetime import timezone
+import logging 
+
+logger = logging.getLogger(__name__)
 
 
 def datestring_to_epoch_ms(s: str) -> int:
@@ -21,11 +24,11 @@ def datestring_to_epoch_ms(s: str) -> int:
 # Prefer deterministic binning:
 # df_to_merge.index = df_to_merge.index.floor('5min')
 
-## Todo 2
+## [x] Todo 2
 # Explicitly flag basal as non-historical
 # basal is consistent with recent setting of the historical profile, but not necessary with the historical basal rate
 
-## Todo 3
+## [x] Todo 3
 # Prevent accidental misuse of insulin (basal might be incorrect)
 
 ## Todo 4
@@ -128,7 +131,7 @@ class Parser(BaseParser):
                 self.save_json(entries, 'entries', api_start_date, api_end_date)
 
         except Exception as e:
-            print(f"Error in data processing: {str(e)}")
+            logger.error(f"Error in data processing: {str(e)}")
             raise
 
         return self.process_data(entries, treatments, profiles, start_date, end_date)
@@ -140,38 +143,41 @@ class Parser(BaseParser):
             df_glucose = self.create_dataframe(entries, 'date', 'sgv', 'CGM')
             # Handle CGM values - replace 0s with NaN and interpolate
             df_glucose['CGM'] = df_glucose['CGM'].replace(0, np.nan)
-            print("Created Glucose DataFrame")
+            logger.debug("Created Glucose DataFrame")
 
             # Process carbs
             df_carbs = self.create_dataframe(treatments, 'created_at', 'carbs', 'carbs',
                                            event_type=['Carb Correction', 'Meal Bolus', 'Snack Bolus'])
-            print("Created Carbs DataFrame")
+            logger.debug("Created Carbs DataFrame")
 
             # Process bolus insulin
             df_bolus = self.create_dataframe(treatments, 'created_at', 'insulin', 'bolus',
                                            event_type=['Bolus', 'Meal Bolus', 'Snack Bolus',
                                                      'Correction Bolus', 'SMB'])
-            print("Created Bolus DataFrame")
+            logger.debug("Created Bolus DataFrame")
 
             # Process temporary basal rates
             df_temp_basal = self.create_dataframe(treatments, 'created_at', ['absolute', 'rate'],
                                                 'basal', event_type='Temp Basal')
             df_temp_duration = self.create_dataframe(treatments, 'created_at', 'duration',
                                                    'duration', event_type='Temp Basal')
-            print("Created Temporary Basal DataFrame")
+            logger.debug("Created Temporary Basal DataFrame")
 
             # Get and process basal profiles
             basal_rates = self.get_basal_rates_from_profile(profiles)
             df_basal_profile = self.create_basal_dataframe([start_date, end_date], basal_rates)
-            print("Created Profile Basal DataFrame")
+            logger.debug("Created Profile Basal DataFrame")
 
             # Process profile switches and apply them
             df_profile_switches = self.create_profile_switches_df(treatments)
             df_basal_profile = self.apply_profile_switches(df_basal_profile, df_profile_switches, profiles)
-            print("Applied Profile Switches")
+            logger.debug("Applied Profile Switches")
 
             # Initialize main dataframe with glucose data
             df = df_glucose.resample('5min').mean()
+            # behaves like
+            # “All samples in [t, t+5min) → bin at t”
+            # later this fits to timestamp.round('5min')
 
             # Merge all components
             df = self.merge_and_process(df, df_carbs, 'carbs')
@@ -200,7 +206,7 @@ class Parser(BaseParser):
             # Final validation for negative values
             for col in ['basal', 'bolus', 'insulin', 'carbs']:
                 if (df[col] < 0).any():
-                    print(f"Warning: Found negative values in {col}, converting to absolute values")
+                    logger.warning(f"Warning: Found negative values in {col}, converting to absolute values")
                     df[col] = df[col].abs()
 
             # Reorder columns
@@ -215,7 +221,7 @@ class Parser(BaseParser):
             df = df.dropna(subset=['CGM'])
 
             df.set_index('date', inplace=True)
-            print("Final DataFrame Created")
+            logger.info("Final DataFrame Created")
 
             # Verify treatments
             df = self.verify_treatments(treatments, df)
@@ -233,7 +239,7 @@ class Parser(BaseParser):
             return df
 
         except Exception as e:
-            print(f"Error in data processing: {str(e)}")
+            logger.error(f"Error in data processing: {str(e)}")
             raise
 
     def merge_basal_rates(self, df, df_profile_basal, df_temp_basal, df_temp_duration):
@@ -486,8 +492,8 @@ class Parser(BaseParser):
                     percents.append(0)
 
             except Exception as e:
-                print(f"Error processing entry: {entry}")
-                print(f"Error details: {str(e)}")
+                logger.info(f"Error processing entry: {entry}")
+                logger.error(f"Error details: {str(e)}")
                 continue
 
         df = pd.DataFrame({
@@ -538,7 +544,7 @@ class Parser(BaseParser):
 
     def verify_treatments(self, treatments, final_df):
         """Verify treatments and ensure non-negative values."""
-        print("\nVerifying treatments capture:")
+        logger.info("\nVerifying treatments capture:")
 
         for treatment in treatments:
             treatment_time = pd.to_datetime(treatment.created_at).tz_convert(final_df.index.tz)
@@ -548,13 +554,13 @@ class Parser(BaseParser):
                 insulin_value = max(0, float(treatment.insulin)) if not pd.isna(treatment.insulin) else 0
                 if floored_time in final_df.index:
                     df_value = final_df.loc[floored_time, 'bolus']
-                    print(f"Treatment insulin: {insulin_value}, DataFrame bolus: {df_value}")
+                    logger.debug(f"Treatment insulin: {insulin_value}, DataFrame bolus: {df_value}")
 
             if hasattr(treatment, 'carbs') and treatment.carbs:
                 carbs_value = max(0, float(treatment.carbs)) if not pd.isna(treatment.carbs) else 0
                 if floored_time in final_df.index:
                     df_value = final_df.loc[floored_time, 'carbs']
-                    print(f"Treatment carbs: {carbs_value}, DataFrame carbs: {df_value}")
+                    logger.debug(f"Treatment carbs: {carbs_value}, DataFrame carbs: {df_value}")
 
         return final_df
 
